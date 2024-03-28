@@ -393,6 +393,7 @@ class BasicPulseExtractor(PulseExtractorBase):
                                  f" Reduce delay or check the provided laser_rising_bins correct?")
                 print(f"DEBUG: laser_rise: {laser_rising_bins[ii]}, delay: {delay_bins},"
                       f" safety: {safety_bins}, max_laser: {max_laser_length} bins")
+                idx_cut_high = len(count_data) - 1
             idx_cut_lasers.append([idx_cut_low, idx_cut_high])
             try:
                 laser_i = count_data[np.arange(idx_cut_low, idx_cut_high)]
@@ -401,7 +402,7 @@ class BasicPulseExtractor(PulseExtractorBase):
 
         idx_cut_lasers = np.asarray(idx_cut_lasers)
         t_cut_lasers = idx_cut_lasers * fc_binwidth
-        #print(f"Cutting out laser pulses at (ns): {1e9*t_cut_lasers}")
+        #print(f"DEBUG: Cutting out laser pulses at (ns): {1e9*t_cut_lasers}")
 
 
         # use the gated extraction method
