@@ -1,0 +1,168 @@
+import os
+import time
+import sys
+import clr
+from collections import OrderedDict
+from qtpy import QtCore
+from  core.module import Base
+from interface.motor_interface import MotorInterface
+
+# Add References to .NET libraries
+clr.AddReference("I:\\Program Files\\Thorlabs\\Kinesis\\Thorlabs.MotionControl.DeviceManagerCLI.dll")
+clr.AddReference("I:\\Program Files\\Thorlabs\\Kinesis\\Thorlabs.MotionControl.GenericMotorCLI.dll")
+clr.AddReference("I:\\Program Files\\Thorlabs\\Kinesis\\Thorlabs.MotionControl.KCube.StepperMotorCLI.dll")
+from Thorlabs.MotionControl.DeviceManagerCLI import *
+from Thorlabs.MotionControl.GenericMotorCLI import *
+from Thorlabs.MotionControl.KCube.StepperMotorCLI import *
+from System import Decimal  # necessary for real world units
+from core.interface import interface_method
+
+class ThorlabsKCubeStepperMotor(Base, MotorInterface):
+
+    _threaded = False
+
+    def __init__(self, manager, name, config=None, callbacks=None):
+        super().__init__(manager, name, config, callbacks)
+        self.device = None
+        self.serial_no = config.get('serial_no', '26000001')  # default serial number, should be in config
+        self.polling_rate = config.get('polling_rate', 250)  # default polling rate
+        self.device_enabled = False
+
+    def on_activate(self):
+        self.log.info("Activating Thorlabs KCube Stepper Motor")
+        try:
+            # Initialize device
+            DeviceManagerCLI.BuildDeviceList()
+            self.device = KCubeStepper.CreateKCubeStepper(self.serial_no)
+            self.device.Connect(self.serial_no)
+            time.sleep(0.25)  # wait for device to connect
+
+            # Start polling and enable device
+            self.device.StartPolling(self.polling_rate)
+            time.sleep(0.25)
+            self.device.EnableDevice()
+            time.sleep(0.25)
+            self.device_enabled = True
+
+            # Load device configuration
+            use_file_settings = DeviceConfiguration.DeviceSettingsUseOptionType.UseFileSettings
+            self.device_config = self.device.LoadMotorConfiguration(self.device.DeviceID, use_file_settings)
+            self.log.info(f"Device {self.serial_no} activated and configured.")
+
+        except Exception as e:
+            self.log.exception("Failed to activate Thorlabs KCube Stepper Motor")
+
+    def on_deactivate(self):
+        self.log.info("Deactivating Thorlabs KCube Stepper Motor")
+        try:
+            if self.device_enabled:
+                self.device.StopPolling()
+                self.device.Disconnect()
+                self.device_enabled = False
+            self.log.info(f"Device {self.serial_no} deactivated.")
+        except Exception as e:
+            self.log.exception("Failed to deactivate Thorlabs KCube Stepper Motor")
+
+    @interface_method
+    def home_motor(self, timeout=60000):
+        """ Home the motor with a specified timeout. """
+        if self.device_enabled:
+            self.log.info("Homing motor...")
+            self.device.Home(timeout)
+            self.log.info("Motor homed.")
+
+    @interface_method
+    def move_to(self, position, timeout=60000):
+        """ Move the motor to a specified position. """
+        if self.device_enabled:
+            new_pos = Decimal(position)
+            self.log.info(f"Moving motor to position {new_pos}...")
+            self.device.MoveTo(new_pos, timeout)
+            self.log.info(f"Motor moved to position {new_pos}.")
+
+    @interface_method
+    def get_velocity_params(self):
+        """ Get the velocity parameters of the motor. """
+        if self.device_enabled:
+            params = self.device.GetVelocityParams()
+            return {'Acceleration': params.Acceleration, 'MaxVelocity': params.MaxVelocity}
+
+    @interface_method
+    def set_velocity_params(self, acceleration, max_velocity):
+        """ Set the velocity parameters of the motor. """
+        if self.device_enabled:
+            self.device.SetVelocityParams(Decimal(acceleration), Decimal(max_velocity))
+            self.log.info(f"Set motor velocity parameters to Acceleration: {acceleration}, MaxVelocity: {max_velocity}")
+
+    @interface_method
+    def get_homing_params(self):
+        """ Get the homing parameters of the motor. """
+        if self.device_enabled:
+            params = self.device.GetHomingParams()
+            return {'Velocity': params.Velocity}
+
+    @interface_method
+    def get_constraints(self):
+        """ Retrieve the hardware constraints from the motor device.
+
+        @return dict: dict with constraints for the sequence generation and GUI
+        """
+        if self.device_enabled:
+            constraints = OrderedDict()
+            velocity_params = self.get_velocity_params()
+
+            constraints['position'] = {
+                'min': self.device_config.MinPosition,
+                'max': self.device_config.MaxPosition,
+                'unit': 'mm'
+            }
+            constraints['velocity'] = {
+                'min': 0,
+                'max': velocity_params['MaxVelocity'],
+                'unit': 'mm/s'
+            }
+            constraints['acceleration'] = {
+                'min': 0,
+                'max': velocity_params['Acceleration'],
+                'unit': 'mm/s²'
+            }
+            return constraints
+
+    @interface_method
+    def get_pos(self):
+        """ Gets current position of the stage arm.
+
+        @return dict: current position of the motor.
+        """
+        if self.device_enabled:
+            position = self.device.Position
+            return {'position': position}
+
+    @interface_method
+    def move_rel(self, step, timeout=60000):
+        """ Move the stage by a relative distance.
+
+        @param float step: step in mm
+        """
+        if self.device_enabled:
+            current_pos = self.device.Position
+            new_pos = current_pos + Decimal(step)
+            self.move_to(new_pos, timeout)
+
+    @interface_method
+    def move_abs(self, position, timeout=60000):
+        """ Move the stage to an absolute position.
+
+        @param float position: position in mm
+        """
+        if self.device_enabled:
+            self.move_to(position, timeout)
+
+    @interface_method
+    def abort(self):
+        """ Stops movement of the stage. """
+        if self.device_enabled:
+            self.device.StopImmediate()
+            self.log.info("Motor movement stopped.")
+
+# Other necessary internal methods can be added here if required.
